@@ -4,6 +4,7 @@ use core::hash::{BuildHasher, Hash};
 use core::mem::{swap, MaybeUninit};
 use hashbrown::raw::{Bucket, RawIter, RawIterHash, RawTable};
 use hashbrown::TryReserveError;
+use crate::exhaust::ExhaustIter;
 
 #[cfg(not(feature = "nightly"))]
 use core::convert::identity as likely;
@@ -339,8 +340,6 @@ where
     }
 
     // Drain the key if the values is selected by the predicate.
-    //
-    // BUG: Iterator must be evaluated in order to drain the values.
     pub fn drain_key_if<'a, Q>(&'a mut self, key: &'a Q, mut predicate: impl FnMut(&'a V) -> bool + 'a) -> impl Iterator<Item = V> + 'a
     where
         K: Borrow<Q>,
@@ -597,6 +596,28 @@ mod tests {
 
         let v: Vec<usize> = map.drain_key_if(&1, |v| *v == 10).collect();
                             assert_eq!(v, vec![10]);
+
+        // collect the values with keys `1` and `2`
+        // note that the order may differ from the insertion order
+        let mut values_1: Vec<_> = map.get_iter(&1).copied().collect();
+        let mut values_2: Vec<_> = map.get_iter(&2).copied().collect();
+        values_1.sort_unstable();
+        values_2.sort_unstable();
+
+        assert_eq!(values_1, vec![11, 12]);
+        assert_eq!(values_2, vec![20, 21]);
+    }
+
+    #[test]
+    fn test_drain_key_if_dropped() {
+        let mut map = MashMap::<usize, usize>::new();
+        map.insert(1, 10);
+        map.insert(1, 11);
+        map.insert(1, 12);
+        map.insert(2, 20);
+        map.insert(2, 21);
+
+        let _ = map.drain_key_if(&1, |v| *v == 10);
 
         // collect the values with keys `1` and `2`
         // note that the order may differ from the insertion order
