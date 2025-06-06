@@ -338,6 +338,23 @@ where
         }
     }
 
+    // Drain the key if the values is selected by the predicate.
+    //
+    // BUG: Iterator must be evaluated in order to drain the values.
+    pub fn drain_key_if<'a, Q>(&'a mut self, key: &'a Q, mut predicate: impl FnMut(&'a V) -> bool + 'a) -> impl Iterator<Item = V> + 'a
+    where
+        K: Borrow<Q>,
+        Q: ?Sized + Hash + Eq,
+    {
+        let hash = make_hash(&self.hash_builder, key);
+        ExhaustIter::new(unsafe {
+            self.table
+                .iter_hash(hash)
+                .filter(bucket_with_key(key))
+                .filter_map(move |bucket| predicate(&bucket.as_ref().1).then(|| (self.table.remove(bucket).0).1))
+        })
+    }
+
     /// Removes all values with the given key from the map.
     pub fn remove_all<Q>(&mut self, key: &Q)
     where
@@ -566,6 +583,29 @@ mod tests {
         values_2.sort_unstable();
 
         assert_eq!(values_1, vec![11, 12, 13]);
+        assert_eq!(values_2, vec![20, 21]);
+    }
+
+    #[test]
+    fn test_drain_key_if() {
+        let mut map = MashMap::<usize, usize>::new();
+        map.insert(1, 10);
+        map.insert(1, 11);
+        map.insert(1, 12);
+        map.insert(2, 20);
+        map.insert(2, 21);
+
+        let v: Vec<usize> = map.drain_key_if(&1, |v| *v == 10).collect();
+                            assert_eq!(v, vec![10]);
+
+        // collect the values with keys `1` and `2`
+        // note that the order may differ from the insertion order
+        let mut values_1: Vec<_> = map.get_iter(&1).copied().collect();
+        let mut values_2: Vec<_> = map.get_iter(&2).copied().collect();
+        values_1.sort_unstable();
+        values_2.sort_unstable();
+
+        assert_eq!(values_1, vec![11, 12]);
         assert_eq!(values_2, vec![20, 21]);
     }
 
